@@ -1,0 +1,12 @@
+*.swp
+*.jpg
+*.png
+.vscode/
+*.pyc
+*.npy
+.DS_Store
+._.DS_Store
+build/
+sdf_pytorch.egg-info
+*.so
+__pychache__/
