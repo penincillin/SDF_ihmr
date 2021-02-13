@@ -19,7 +19,6 @@ class SDFFunction(Function):
         return None, None, None
 
 class SDF(nn.Module):
-
     def forward(self, faces, vertices, grid_size=32):
         phi = torch.zeros(vertices.shape[0], grid_size, grid_size, grid_size, device=vertices.device)
         phi = SDFFunction.apply(phi, faces, vertices)

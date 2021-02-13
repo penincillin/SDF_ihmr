@@ -14,6 +14,7 @@ class SDFLoss(nn.Module):
         self.register_buffer('left_face', torch.tensor(left_faces.astype(np.int32)))
         self.grid_size = grid_size
         self.robustifier = robustifier
+        # print("robustifier", self.robustifier)
 
     @torch.no_grad()
     def get_bounding_boxes(self, vertices):
@@ -38,8 +39,8 @@ class SDFLoss(nn.Module):
             vertices_centered_scaled = vertices_centered / boxes_scale
             assert(vertices_centered_scaled.min() >= -1)
             assert(vertices_centered_scaled.max() <= 1)
-            right_phi = self.sdf(self.right_face, vertices_centered_scaled[0:1])
-            left_phi = self.sdf(self.left_face, vertices_centered_scaled[1:2])
+            right_phi = self.sdf(self.right_face, vertices_centered_scaled[0:1], self.grid_size)
+            left_phi = self.sdf(self.left_face, vertices_centered_scaled[1:2], self.grid_size)
             assert(right_phi.min() >= 0)
             assert(left_phi.min() >= 0)
 
@@ -61,5 +62,6 @@ class SDFLoss(nn.Module):
             if self.robustifier:
                 frac = (cur_loss / self.robustifier) ** 2
                 cur_loss = frac / (frac + 1)
+                # print("here", cur_loss)
             loss += cur_loss.sum() / num_hand ** 2
         return loss
