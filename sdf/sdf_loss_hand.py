@@ -18,50 +18,61 @@ class SDFLoss(nn.Module):
 
     @torch.no_grad()
     def get_bounding_boxes(self, vertices):
-        num_people = vertices.shape[0]
-        boxes = torch.zeros(num_people, 2, 3, device=vertices.device)
-        for i in range(num_people):
-            boxes[i, 0, :] = vertices[i].min(dim=0)[0]
-            boxes[i, 1, :] = vertices[i].max(dim=0)[0]
+        bs = vertices.shape[0]
+        boxes = torch.zeros(bs, 2, 2, 3, device=vertices.device)
+        boxes[:, :, 0, :] = vertices.min(dim=2)[0]
+        boxes[:, :, 1, :] = vertices.max(dim=2)[0]
         return boxes
 
     def forward(self, vertices, scale_factor=0.2):
-        num_hand = vertices.shape[0]
-        boxes = self.get_bounding_boxes(vertices)
+        bs = vertices.shape[0]
+        num_hand = 2
+        boxes = self.get_bounding_boxes(vertices) # (10, 2, 2, 3)
         loss = torch.tensor(0., device=vertices.device)
 
         # re-scale the input vertices
-        boxes_center = boxes.mean(dim=1).unsqueeze(dim=1)
-        boxes_scale = (1+scale_factor) * 0.5*(boxes[:,1] - boxes[:,0]).max(dim=-1)[0][:,None,None]
+        boxes_center = boxes.mean(dim=2).unsqueeze(dim=2) # (10, 2, 1, 3)
+        boxes_scale = (1+scale_factor) * 0.5*(boxes[:,:,1] - boxes[:,:,0]).max(dim=-1)[0][:, :, None,None] # (10, 2, 1, 1)
 
         with torch.no_grad():
             vertices_centered = vertices - boxes_center
             vertices_centered_scaled = vertices_centered / boxes_scale
             assert(vertices_centered_scaled.min() >= -1)
             assert(vertices_centered_scaled.max() <= 1)
-            right_phi = self.sdf(self.right_face, vertices_centered_scaled[0:1], self.grid_size)
-            left_phi = self.sdf(self.left_face, vertices_centered_scaled[1:2], self.grid_size)
-            assert(right_phi.min() >= 0)
-            assert(left_phi.min() >= 0)
-
+            right_verts = vertices_centered_scaled[:, 0].contiguous()
+            left_verts = vertices_centered_scaled[:, 1].contiguous()
+            right_phi = self.sdf(self.right_face, right_verts, self.grid_size)
+            left_phi = self.sdf(self.left_face, left_verts, self.grid_size)
+            assert(right_phi.min() >= 0) # (10, 32, 32, 32)
+            assert(left_phi.min() >= 0) # (10, 32, 32, 32)
+        
         # concat left & right phi
         # be aware of the order, input vertices the order is right, left
-        phi = torch.cat([right_phi, left_phi], dim=0)
+        phi = [right_phi, left_phi]
+        losses = list()
 
-        # for i in [0, 1]:
         for i in [0, 1]:
-            vertices_local = (vertices[i:i+1] - boxes_center[1-i].unsqueeze(dim=0)) / boxes_scale[i].unsqueeze(dim=0)
-            vertices_grid = vertices_local.view(1,-1,1,1,3)
+            # print('vertices', vertices.size())
+            vertices_local = (vertices[:, i:i+1] - boxes_center[:, 1-i].unsqueeze(dim=1)) / boxes_scale[:, i].unsqueeze(dim=1)
+            # print('vertices_local', vertices_local.size())
+            vertices_grid = vertices_local.view(bs,-1,1,1,3)
+            # print('vertices_grid', vertices_grid.size())
             # Sample from the phi grid
             phi_val = nn.functional.grid_sample(
-                phi[1-i][None, None], vertices_grid, align_corners=True).view(1, -1)
-            # print(phi.size(), vertices_local.size(), vertices_grid.size(), phi_val.size())
+                phi[1-i].unsqueeze(dim=1), vertices_grid, align_corners=True).view(10, -1)
+            # print(phi[1-i].unsqueeze(dim=1).size())
+            # print(vertices_grid.size())
+            # print(phi_val.size())
             # sys.exit(0)
             cur_loss = phi_val
+
             # robustifier, cur_loss = cur_loss^2 / (cur_loss^2 + robust^2)
             if self.robustifier:
                 frac = (cur_loss / self.robustifier) ** 2
                 cur_loss = frac / (frac + 1)
                 # print("here", cur_loss)
-            loss += cur_loss.sum() / num_hand ** 2
+            cur_loss = cur_loss / num_hand ** 2
+            losses.append(cur_loss)
+        loss = (losses[0] + losses[1])
+        loss = loss.sum(dim=1)
         return loss
