@@ -27,12 +27,12 @@ class SDFLoss(nn.Module):
     def forward(self, vertices, scale_factor=0.2):
         bs = vertices.shape[0]
         num_hand = 2
-        boxes = self.get_bounding_boxes(vertices) # (10, 2, 2, 3)
+        boxes = self.get_bounding_boxes(vertices) # (bs, 2, 2, 3)
         loss = torch.tensor(0., device=vertices.device)
 
         # re-scale the input vertices
-        boxes_center = boxes.mean(dim=2).unsqueeze(dim=2) # (10, 2, 1, 3)
-        boxes_scale = (1+scale_factor) * 0.5*(boxes[:,:,1] - boxes[:,:,0]).max(dim=-1)[0][:, :, None,None] # (10, 2, 1, 1)
+        boxes_center = boxes.mean(dim=2).unsqueeze(dim=2) # (bs, 2, 1, 3)
+        boxes_scale = (1+scale_factor) * 0.5*(boxes[:,:,1] - boxes[:,:,0]).max(dim=-1)[0][:, :, None,None] # (bs, 2, 1, 1)
 
         with torch.no_grad():
             vertices_centered = vertices - boxes_center
@@ -43,8 +43,8 @@ class SDFLoss(nn.Module):
             left_verts = vertices_centered_scaled[:, 1].contiguous()
             right_phi = self.sdf(self.right_face, right_verts, self.grid_size)
             left_phi = self.sdf(self.left_face, left_verts, self.grid_size)
-            assert(right_phi.min() >= 0) # (10, 32, 32, 32)
-            assert(left_phi.min() >= 0) # (10, 32, 32, 32)
+            assert(right_phi.min() >= 0) # (bs, 32, 32, 32)
+            assert(left_phi.min() >= 0) # (bs, 32, 32, 32)
         
         # concat left & right phi
         # be aware of the order, input vertices the order is right, left
@@ -59,7 +59,7 @@ class SDFLoss(nn.Module):
             # print('vertices_grid', vertices_grid.size())
             # Sample from the phi grid
             phi_val = nn.functional.grid_sample(
-                phi[1-i].unsqueeze(dim=1), vertices_grid, align_corners=True).view(10, -1)
+                phi[1-i].unsqueeze(dim=1), vertices_grid, align_corners=True).view(bs, -1)
             # print(phi[1-i].unsqueeze(dim=1).size())
             # print(vertices_grid.size())
             # print(phi_val.size())
@@ -70,7 +70,6 @@ class SDFLoss(nn.Module):
             if self.robustifier:
                 frac = (cur_loss / self.robustifier) ** 2
                 cur_loss = frac / (frac + 1)
-                # print("here", cur_loss)
             cur_loss = cur_loss / num_hand ** 2
             losses.append(cur_loss)
         loss = (losses[0] + losses[1])
