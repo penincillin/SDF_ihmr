@@ -24,7 +24,7 @@ class SDFLoss(nn.Module):
         boxes[:, :, 1, :] = vertices.max(dim=2)[0]
         return boxes
 
-    def forward(self, vertices, scale_factor=0.2):
+    def forward(self, vertices, scale_factor=0.2, return_per_vert_loss=False):
         bs = vertices.shape[0]
         num_hand = 2
         boxes = self.get_bounding_boxes(vertices) # (bs, 2, 2, 3)
@@ -72,6 +72,13 @@ class SDFLoss(nn.Module):
                 cur_loss = frac / (frac + 1)
             cur_loss = cur_loss / num_hand ** 2
             losses.append(cur_loss)
+
+        import pdb 
         loss = (losses[0] + losses[1])
         loss = loss.sum(dim=1)
-        return loss
+        loss_per_vert = torch.cat((losses[0], losses[1]), dim=1)
+
+        if not return_per_vert_loss:
+            return loss
+        else:
+            return loss, loss_per_vert
