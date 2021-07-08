@@ -14,7 +14,6 @@ class SDFLoss(nn.Module):
         self.register_buffer('left_face', torch.tensor(left_faces.astype(np.int32)))
         self.grid_size = grid_size
         self.robustifier = robustifier
-        # print("robustifier", self.robustifier)
 
     @torch.no_grad()
     def get_bounding_boxes(self, vertices):
@@ -24,7 +23,10 @@ class SDFLoss(nn.Module):
         boxes[:, :, 1, :] = vertices.max(dim=2)[0]
         return boxes
 
-    def forward(self, vertices, scale_factor=0.2, return_per_vert_loss=False):
+    def forward(self, vertices, scale_factor=0.2, return_per_vert_loss=False, return_origin_scale_loss=False):
+        assert not (return_origin_scale_loss and (not return_per_vert_loss))
+
+        # vertices: (bs, 2, 778, 3)
         bs = vertices.shape[0]
         num_hand = 2
         boxes = self.get_bounding_boxes(vertices) # (bs, 2, 2, 3)
@@ -50,35 +52,37 @@ class SDFLoss(nn.Module):
         # be aware of the order, input vertices the order is right, left
         phi = [right_phi, left_phi]
         losses = list()
+        losses_origin_scale = list()
 
         for i in [0, 1]:
-            # print('vertices', vertices.size())
+            # vertices_local: (bs, 1, 778, 3)
             vertices_local = (vertices[:, i:i+1] - boxes_center[:, 1-i].unsqueeze(dim=1)) / boxes_scale[:, i].unsqueeze(dim=1)
-            # print('vertices_local', vertices_local.size())
+            # vertices_grid: (bs, 778, 1, 1, 3)
             vertices_grid = vertices_local.view(bs,-1,1,1,3)
-            # print('vertices_grid', vertices_grid.size())
             # Sample from the phi grid
             phi_val = nn.functional.grid_sample(
                 phi[1-i].unsqueeze(dim=1), vertices_grid, align_corners=True).view(bs, -1)
-            # print(phi[1-i].unsqueeze(dim=1).size())
-            # print(vertices_grid.size())
-            # print(phi_val.size())
-            # sys.exit(0)
-            cur_loss = phi_val
+            cur_loss = phi_val # (10, 778)
 
-            # robustifier, cur_loss = cur_loss^2 / (cur_loss^2 + robust^2)
+            # robustifier: cur_loss = cur_loss^2 / (cur_loss^2 + robust^2)
             if self.robustifier:
                 frac = (cur_loss / self.robustifier) ** 2
                 cur_loss = frac / (frac + 1)
-            cur_loss = cur_loss / num_hand ** 2
-            losses.append(cur_loss)
+            
+            cur_loss_bp = cur_loss / num_hand ** 2
+            cur_loss_os = cur_loss * boxes_scale[:, i, 0]
+            losses.append(cur_loss_bp)
+            losses_origin_scale.append(cur_loss_os)
 
-        import pdb 
         loss = (losses[0] + losses[1])
         loss = loss.sum(dim=1)
         loss_per_vert = torch.cat((losses[0], losses[1]), dim=1)
+        loss_origin_scale = torch.cat((losses_origin_scale[0], losses_origin_scale[1]), dim=1)
 
         if not return_per_vert_loss:
             return loss
         else:
-            return loss, loss_per_vert
+            if not return_origin_scale_loss:
+                return loss, loss_per_vert
+            else:
+                return loss, loss_per_vert, loss_origin_scale
